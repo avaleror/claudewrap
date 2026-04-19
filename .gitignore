@@ -1,0 +1,28 @@
+.DS_Store
+CLAUDE.md
+*.env
+.env.*
+secrets.*
+*.pem
+*.key
+
+# Go
+claudewrap
+/claudewrap-menubar
+
+# Swift
+menubar/.build/
+menubar/DerivedData/
+*.xcworkspace
+*.xcuserdata
+
+# Ollama model artifacts
+/tmp/claudewrap-Modelfile
+
+# Runtime state
+~/.claudewrap/
+
+# IDE
+.idea/
+.vscode/
+*.swp
