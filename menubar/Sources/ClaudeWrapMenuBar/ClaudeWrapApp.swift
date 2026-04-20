@@ -10,6 +10,7 @@ struct ClaudeWrapApp: App {
     }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var statusItem: NSStatusItem?
     var popover: NSPopover?
@@ -34,8 +35,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         popover?.contentViewController = NSHostingController(rootView: view)
         popover?.behavior = .transient
 
+        monitor.start()
+
         iconUpdateTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            self?.updateIcon()
+            Task { @MainActor in self?.updateIcon() }
         }
         updateIcon()
 
@@ -46,10 +49,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         )
     }
 
-    @objc func togglePopover(_ sender: Any?) {
+    @objc func togglePopover(_ sender: AnyObject?) {
         guard let btn = statusItem?.button else { return }
         if popover?.isShown == true {
-            popover?.performClose(sender)
+            popover?.performClose(nil)
         } else {
             popover?.show(relativeTo: btn.bounds, of: btn, preferredEdge: .minY)
         }
@@ -67,14 +70,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     func updateIcon() {
         let snap = monitor.snapshot
-        let label: String
         if snap.remainingPct <= 11 {
-            label = "CC⚠"
+            statusItem?.button?.title = "CC⚠"
         } else {
-            label = String(format: "CC %.0f%%", snap.remainingPct)
-        }
-        DispatchQueue.main.async {
-            self.statusItem?.button?.title = label
+            statusItem?.button?.title = String(format: "CC %.0f%%", snap.remainingPct)
         }
     }
 

@@ -12,6 +12,7 @@ struct TokenSnapshot {
     var activeSessions: Int
 }
 
+@MainActor
 final class TokenMonitor: ObservableObject {
     @Published var snapshot = TokenSnapshot(
         remainingPct: 100, usedTokens: 0, totalTokens: 0,
@@ -23,16 +24,15 @@ final class TokenMonitor: ObservableObject {
     private let projectsURL: URL
     private let sessionDir: URL
 
-    init() {
+    nonisolated init() {
         let home = FileManager.default.homeDirectoryForCurrentUser
         projectsURL = home.appendingPathComponent(".claude/projects")
         sessionDir = home.appendingPathComponent(".claudewrap/sessions")
-        start()
     }
 
     func start() {
         timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            self?.refresh()
+            Task { @MainActor in self?.refresh() }
         }
         refresh()
     }
@@ -64,9 +64,7 @@ final class TokenMonitor: ObservableObject {
 
         snap.compactionCount = readCompactionCount()
 
-        DispatchQueue.main.async {
-            self.snapshot = snap
-        }
+        snapshot = snap
     }
 
     private func findActiveJSONLFiles() -> [URL] {
