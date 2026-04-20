@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -28,7 +29,7 @@ func renderTokenPanel(snap monitor.StateSnapshot, width int, showBreakdown bool)
 		barColor = colorWarn
 	}
 	bar := monitor.ProgressBar(remaining, barWidth)
-	b.WriteString(fmt.Sprintf("  Used:  %d tokens\n", snap.UsedTokens))
+	b.WriteString(fmt.Sprintf("  Used:  %s tokens\n", formatTokens(snap.UsedTokens)))
 	b.WriteString(fmt.Sprintf("  Rem:   %s\n",
 		lipgloss.NewStyle().Foreground(barColor).Render(bar)))
 
@@ -101,7 +102,22 @@ func renderBreakdown(bd *monitor.Breakdown, width int) string {
 	total := bd.ClaudeMD + bd.ToolCallIO + bd.MentionedFiles +
 		bd.ExtendedThinking + bd.Conversation + bd.SkillActivations +
 		bd.TeamOverhead + bd.UserText
-	b.WriteString(fmt.Sprintf("  %-12s %d\n", "Total", total))
+	b.WriteString(fmt.Sprintf("  %-12s %s\n", "Total", formatTokens(total)))
 
+	return b.String()
+}
+
+func formatTokens(n int) string {
+	s := strconv.Itoa(n)
+	cut := len(s) % 3
+	if cut == 0 {
+		cut = 3
+	}
+	var b strings.Builder
+	b.WriteString(s[:cut])
+	for i := cut; i < len(s); i += 3 {
+		b.WriteByte(',')
+		b.WriteString(s[i : i+3])
+	}
 	return b.String()
 }

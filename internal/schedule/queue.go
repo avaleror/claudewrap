@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -46,6 +47,30 @@ func Clear() error {
 func HasQueue() bool {
 	_, err := os.Stat(queuePath())
 	return err == nil
+}
+
+// ContextSnapshot captures token state at the moment of rate limiting.
+type ContextSnapshot struct {
+	Timestamp       time.Time `json:"timestamp"`
+	RemainingPct    float64   `json:"remaining_pct"`
+	UsedTokens      int       `json:"used_tokens"`
+	TotalTokens     int       `json:"total_tokens"`
+	EstimatedReset  time.Time `json:"estimated_reset"`
+	CompactionCount int       `json:"compaction_count"`
+}
+
+func SaveContextSnapshot(snap ContextSnapshot) error {
+	snap.Timestamp = time.Now()
+	name := fmt.Sprintf("context_%s.json", snap.Timestamp.Format("20060102-150405"))
+	path := filepath.Join(os.Getenv("HOME"), ".claudewrap", name)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
 }
 
 func save(q []QueuedPrompt) error {

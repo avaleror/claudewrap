@@ -12,6 +12,7 @@ import (
 	appctx "github.com/avaleror/claudewrap/internal/context"
 	"github.com/avaleror/claudewrap/internal/monitor"
 	"github.com/avaleror/claudewrap/internal/notify"
+	"github.com/avaleror/claudewrap/internal/schedule"
 )
 
 const (
@@ -23,20 +24,21 @@ const (
 
 // App is the root BubbleTea model for ClaudeWrap.
 type App struct {
-	term          *TermWidget
-	panel         monitor.StateSnapshot
-	input         InputModel
-	preview       PreviewModel
-	state         ClaudeState
-	width         int
-	height        int
-	showBreakdown bool
-	engine        string // compression engine label
-	termCtx       appctx.TerminalContext
-	gitBranch     string
+	term            *TermWidget
+	panel           monitor.StateSnapshot
+	input           InputModel
+	preview         PreviewModel
+	state           ClaudeState
+	width           int
+	height          int
+	showBreakdown   bool
+	engine          string // compression engine label
+	termCtx         appctx.TerminalContext
+	gitBranch       string
 	lowTokenAlerted bool
 	compactArmed    bool     // /compact ready to fire on next idle
 	replayQueue     []string // prompts to inject on first StateWaiting
+	fallbackLog     string   // accumulated Q&A shown when rate limited
 }
 
 // StateUpdateMsg carries fresh token state from the JSONL monitor.
@@ -123,9 +125,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case RateLimitMsg:
 		a.state = StateRateLimit
+		a.fallbackLog = "[Rate limited — routing new prompts to fallback chain]\n\n"
+		schedule.SaveContextSnapshot(schedule.ContextSnapshot{
+			RemainingPct:    a.panel.RemainingPct,
+			UsedTokens:      a.panel.UsedTokens,
+			TotalTokens:     a.panel.TotalTokens,
+			EstimatedReset:  a.panel.EstimatedReset,
+			CompactionCount: a.panel.CompactionCount,
+		})
 
 	case PreCompactMsg:
 		a.panel.CompactionCount++
+		a.gitBranch = GitBranch()
 
 	case SessionStartMsg:
 		// nothing to do here — JSONL watcher started from daemon handler
@@ -150,13 +161,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.state = StateRunning
 
 	case SubmitMsg:
-		// User pressed Enter in input area
 		text := strings.TrimSpace(msg.Text)
 		if text == "" {
 			break
 		}
-		// Run compression in background
-		cmds = append(cmds, compressAsync(text))
+		if a.state == StateRateLimit {
+			a.fallbackLog += fmt.Sprintf("You: %s\n\n", text)
+			cmds = append(cmds, fallbackAsync(text))
+		} else {
+			cmds = append(cmds, compressAsync(text))
+		}
 
 	case compressResultMsg:
 		a.engine = msg.engine
@@ -169,6 +183,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			a.preview, cmd = a.preview.Show(msg.original, msg.compressed, msg.engine)
 			cmds = append(cmds, cmd)
+		}
+
+	case fallbackResultMsg:
+		if msg.err != nil {
+			a.fallbackLog += fmt.Sprintf("[All fallback providers failed: %v]\n\n", msg.err)
+		} else {
+			a.fallbackLog += fmt.Sprintf("%s:\n%s\n\n", msg.engine, msg.text)
+			a.panel.FallbackEngine = msg.engine
+			a.panel.FallbackDailyTokens += msg.tokens
+			a.panel.FallbackDailyCost += fallbackCostPerToken(msg.engine) * float64(msg.tokens)
 		}
 
 	case PreviewTickMsg, PreviewCancelMsg:
@@ -186,7 +210,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		// 'b' toggles breakdown view
-		if k.Text == "b" && a.state == StateWaiting && a.preview.State == PreviewHidden {
+		if k.Text == "b" && (a.state == StateWaiting || a.state == StateRateLimit) && a.preview.State == PreviewHidden {
 			a.showBreakdown = !a.showBreakdown
 			break
 		}
@@ -199,8 +223,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		// When waiting for input: route keys to our input component
-		if a.state == StateWaiting {
+		// Waiting or rate-limited: route keys to our input component
+		if a.state == StateWaiting || a.state == StateRateLimit {
 			var cmd tea.Cmd
 			a.input, cmd = a.input.Update(msg)
 			cmds = append(cmds, cmd)
@@ -235,8 +259,11 @@ func (a *App) View() tea.View {
 	termH := a.height - statusHeight - inputHeight - previewHeight
 	termW := a.width - panelWidth - 1
 
-	// Left: terminal output
+	// Left: terminal output (or fallback log when rate limited)
 	termContent := a.term.View()
+	if a.state == StateRateLimit && a.fallbackLog != "" {
+		termContent = a.fallbackLog
+	}
 
 	// Right: token panel
 	panelContent := renderTokenPanel(a.panel, panelWidth-2, a.showBreakdown)
@@ -267,7 +294,7 @@ func (a *App) View() tea.View {
 	var inputLine string
 	if a.preview.State == PreviewVisible {
 		inputLine = a.preview.View(a.width)
-	} else if a.state == StateWaiting {
+	} else if a.state == StateWaiting || a.state == StateRateLimit {
 		inputLine = a.input.View()
 	} else {
 		inputLine = dimStyle.Render("  [Claude is thinking...]")
@@ -341,11 +368,44 @@ type compressResultMsg struct {
 }
 
 func compressAsync(text string) tea.Cmd {
-	return func() tea.Msg {
-		from := "github.com/avaleror/claudewrap/internal/compress"
-		_ = from
-		// Import via full path at call site to avoid import cycle
-		return runCompress(text)
+	return func() tea.Msg { return runCompress(text) }
+}
+
+// fallbackResultMsg carries the result of an AI fallback query.
+type fallbackResultMsg struct {
+	text   string
+	engine string
+	tokens int
+	err    error
+}
+
+func fallbackAsync(text string) tea.Cmd {
+	return func() tea.Msg { return runFallback(text) }
+}
+
+var runFallback = func(text string) tea.Msg {
+	return fallbackResultMsg{err: fmt.Errorf("fallback not configured")}
+}
+
+// SetFallbackFunc wires in the real fallback chain from cmd.
+func SetFallbackFunc(fn func(string) tea.Msg) {
+	runFallback = fn
+}
+
+// FallbackResult builds a fallbackResultMsg for use from cmd package.
+func FallbackResult(text, engine string, tokens int, err error) tea.Msg {
+	return fallbackResultMsg{text: text, engine: engine, tokens: tokens, err: err}
+}
+
+// fallbackCostPerToken returns a rough USD/token estimate for each engine.
+func fallbackCostPerToken(engine string) float64 {
+	switch {
+	case strings.Contains(engine, "Grok"):
+		return 5.0 / 1_000_000 // ~$5/1M tokens
+	case strings.Contains(engine, "Gemini"):
+		return 0.15 / 1_000_000 // ~$0.15/1M tokens
+	default:
+		return 0 // Ollama local
 	}
 }
 

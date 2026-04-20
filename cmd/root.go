@@ -14,6 +14,7 @@ import (
 	"github.com/avaleror/claudewrap/internal/compress"
 	appctx "github.com/avaleror/claudewrap/internal/context"
 	"github.com/avaleror/claudewrap/internal/daemon"
+	"github.com/avaleror/claudewrap/internal/fallback"
 	"github.com/avaleror/claudewrap/internal/monitor"
 	"github.com/avaleror/claudewrap/internal/schedule"
 	"github.com/avaleror/claudewrap/internal/tui"
@@ -30,12 +31,14 @@ var (
 	hookSessionStartFlag bool
 	hookRateLimitFlag    bool
 	hookPreCompactFlag   bool
+	resumeFlag           bool
 )
 
 func init() {
 	rootCmd.Flags().BoolVar(&hookSessionStartFlag, "hook-session-start", false, "")
 	rootCmd.Flags().BoolVar(&hookRateLimitFlag, "hook-rate-limit", false, "")
 	rootCmd.Flags().BoolVar(&hookPreCompactFlag, "hook-pre-compact", false, "")
+	rootCmd.Flags().BoolVar(&resumeFlag, "resume", false, "Resume the most recent Claude session")
 	rootCmd.Flags().MarkHidden("hook-session-start")
 	rootCmd.Flags().MarkHidden("hook-rate-limit")
 	rootCmd.Flags().MarkHidden("hook-pre-compact")
@@ -64,6 +67,10 @@ func runRoot(cmd *cobra.Command, args []string) error {
 
 	if isVimEnv() {
 		return runPassthrough(args)
+	}
+
+	if resumeFlag {
+		args = append([]string{"--resume"}, args...)
 	}
 
 	var replayQueue []string
@@ -104,10 +111,14 @@ func runTUI(args []string, replayQueue []string) error {
 		return fmt.Errorf("failed to start TUI: %w", err)
 	}
 
-	// Wire in the real compression pipeline
 	tui.SetCompressFunc(func(text string) tea.Msg {
 		r := compress.Compress(text)
 		return tui.CompressResult(text, r.Text, r.Engine, r.Skipped)
+	})
+
+	tui.SetFallbackFunc(func(text string) tea.Msg {
+		result, engine, tokens, err := fallback.Chain(text)
+		return tui.FallbackResult(result, engine, tokens, err)
 	})
 
 	p := tea.NewProgram(app)

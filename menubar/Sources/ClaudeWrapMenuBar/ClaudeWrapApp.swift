@@ -70,11 +70,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     func updateIcon() {
         let snap = monitor.snapshot
-        if snap.remainingPct <= 11 {
-            statusItem?.button?.title = "CC⚠"
-        } else {
-            statusItem?.button?.title = String(format: "CC %.0f%%", snap.remainingPct)
-        }
+        let pct = snap.remainingPct
+        let label = pct <= 11 ? "CC⚠" : String(format: "CC %.0f%%", pct)
+        let color: NSColor = pct <= 11 ? .systemRed : pct <= 30 ? .systemOrange : .labelColor
+        let attrs: [NSAttributedString.Key: Any] = [.foregroundColor: color]
+        statusItem?.button?.attributedTitle = NSAttributedString(string: label, attributes: attrs)
+        let sessions = snap.activeSessions
+        statusItem?.button?.toolTip = "\(sessions) active session\(sessions == 1 ? "" : "s")"
     }
 
     func sendNotification(title: String, body: String) {
