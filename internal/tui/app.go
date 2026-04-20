@@ -1,3 +1,6 @@
+// Package tui contains the BubbleTea models that make up the ClaudeWrap UI:
+// App (root model), TermWidget (PTY wrapper), InputModel (prompt input with history),
+// PreviewModel (compression preview overlay), and the token panel renderer.
 package tui
 
 import (

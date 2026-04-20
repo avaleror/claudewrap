@@ -1,8 +1,10 @@
+// Package compact tracks how many times /compact has run in a session and
+// emits warnings when repeated compaction starts to degrade response quality.
 package compact
 
 const (
-	WarnThreshold    = 2
-	RestartThreshold = 3
+	WarnThreshold    = 2 // compaction count at which quality starts degrading
+	RestartThreshold = 3 // compaction count at which a session restart is recommended
 )
 
 type Warning int

@@ -1,3 +1,6 @@
+// Ollama HTTP client for prompt compression.
+// Uses the OpenAI-compatible /v1/chat/completions endpoint so the same model
+// (claudewrap-compressor) can be swapped for any Ollama-hosted chat model.
 package compress
 
 import (

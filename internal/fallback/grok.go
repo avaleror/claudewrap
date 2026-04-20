@@ -1,3 +1,7 @@
+// Package fallback provides an AI fallback chain used when the Claude session
+// is rate-limited. Queries are routed Grok → Gemini → local Ollama. Each
+// provider requires its API key set as an environment variable; missing keys
+// cause that provider to be skipped automatically.
 package fallback
 
 import (
@@ -11,6 +15,7 @@ import (
 
 const grokModel = "grok-4-1-fast"
 
+// QueryGrok sends prompt to xAI's Grok API. Requires GROK_API_KEY.
 func QueryGrok(prompt string) (string, int, error) {
 	key := os.Getenv("GROK_API_KEY")
 	if key == "" {

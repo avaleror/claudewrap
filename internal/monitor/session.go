@@ -20,10 +20,12 @@ type SessionInfo struct {
 	CompactionCount int       `json:"compaction_count"`
 }
 
+// SessionInfoPath returns the filesystem path for a session's info JSON file.
 func SessionInfoPath(sessionID string) string {
 	return filepath.Join(os.Getenv("HOME"), ".claudewrap", "sessions", sessionID+".json")
 }
 
+// WriteSessionInfo persists a SessionInfo to disk. Called by the SessionStart hook.
 func WriteSessionInfo(info SessionInfo) error {
 	dir := filepath.Dir(SessionInfoPath(info.SessionID))
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -36,6 +38,7 @@ func WriteSessionInfo(info SessionInfo) error {
 	return os.WriteFile(SessionInfoPath(info.SessionID), data, 0644)
 }
 
+// ReadSessionInfo loads the persisted session info for the given session ID.
 func ReadSessionInfo(sessionID string) (*SessionInfo, error) {
 	data, err := os.ReadFile(SessionInfoPath(sessionID))
 	if err != nil {
@@ -48,7 +51,7 @@ func ReadSessionInfo(sessionID string) (*SessionInfo, error) {
 	return &info, nil
 }
 
-// State holds the live token state for a session, updated as JSONL entries arrive.
+// State is a thread-safe accumulator updated by the JSONL Watcher on every new entry.
 type State struct {
 	mu sync.RWMutex
 
@@ -65,6 +68,7 @@ type State struct {
 	GitBranch           string
 }
 
+// NewState returns a State with 100% remaining tokens as the initial assumption.
 func NewState() *State {
 	return &State{RemainingPct: 100}
 }
@@ -95,12 +99,14 @@ func (s *State) Update(e Entry) {
 	}
 }
 
+// IncrCompaction increments the compaction counter. Called when a PreCompact event arrives.
 func (s *State) IncrCompaction() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.CompactionCount++
 }
 
+// Snapshot returns a read-only copy of the current state for the UI to render.
 func (s *State) Snapshot() StateSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -135,6 +141,7 @@ type StateSnapshot struct {
 	IsPeak              bool
 }
 
+// ResetIn formats the estimated time until Claude's token allowance resets.
 func (s StateSnapshot) ResetIn() string {
 	if s.EstimatedReset.IsZero() {
 		return "unknown"
@@ -158,6 +165,7 @@ func estimatedResetTime(first time.Time) time.Time {
 	return first.Add(5 * time.Hour)
 }
 
+// ProgressBar renders a fixed-width ASCII progress bar for the given percentage.
 func ProgressBar(pct float64, width int) string {
 	filled := int(math.Round(float64(width) * pct / 100))
 	if filled > width {

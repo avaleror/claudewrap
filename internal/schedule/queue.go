@@ -1,3 +1,7 @@
+// Package schedule persists prompts and context snapshots across sessions.
+// When Claude hits a rate limit the current prompt is queued; on the next
+// claudewrap start the user is offered a replay. Context snapshots capture
+// token state at the moment of rate-limiting for post-mortem inspection.
 package schedule
 
 import (
@@ -18,6 +22,7 @@ func queuePath() string {
 	return filepath.Join(os.Getenv("HOME"), ".claudewrap", "queue.json")
 }
 
+// Load reads the prompt queue from disk. Returns nil, nil if no queue exists.
 func Load() ([]QueuedPrompt, error) {
 	data, err := os.ReadFile(queuePath())
 	if os.IsNotExist(err) {
@@ -30,6 +35,7 @@ func Load() ([]QueuedPrompt, error) {
 	return q, json.Unmarshal(data, &q)
 }
 
+// Append adds a prompt to the persistent queue. Called by the rate-limit hook.
 func Append(prompt string, bypass bool) error {
 	existing, _ := Load()
 	existing = append(existing, QueuedPrompt{

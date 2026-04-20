@@ -1,3 +1,6 @@
+// ClaudeWrapApp.swift — menubar entry point.
+// AppDelegate owns the NSStatusItem, popover, and notification handling.
+// TokenMonitor is started here and drives both the icon label and the popover view.
 import SwiftUI
 import UserNotifications
 

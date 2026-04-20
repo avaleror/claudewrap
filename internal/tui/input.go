@@ -1,3 +1,5 @@
+// InputModel is the single-line prompt input with history, Ctrl+W, and Ctrl+U.
+// It emits SubmitMsg on Enter and CancelMsg on Esc.
 package tui
 
 import (

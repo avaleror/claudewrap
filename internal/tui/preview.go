@@ -1,3 +1,5 @@
+// PreviewModel shows the compressed prompt for 2 seconds before sending it.
+// The user can press Esc within that window to send the original instead.
 package tui
 
 import (

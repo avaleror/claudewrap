@@ -1,3 +1,6 @@
+// Package notify delivers desktop notifications on macOS via three mechanisms
+// (tried in order): alerter (richer, action buttons), osascript, and OSC 9
+// terminal escape sequences (always emitted, silently ignored by plain terminals).
 package notify
 
 import (

@@ -1,3 +1,6 @@
+// Token panel renders real-time session stats in the right sidebar:
+// remaining percentage bar, cache hit display, reset estimate, compaction warnings,
+// and optional per-category token breakdown (toggled with 'b').
 package tui
 
 import (

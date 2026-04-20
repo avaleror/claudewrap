@@ -1,5 +1,8 @@
+// TokenMonitor.swift — polls JSONL files and session info every 2s and publishes
+// a TokenSnapshot. Runs entirely on @MainActor to avoid data-race warnings in Swift 6.
 import Foundation
 
+// TokenSnapshot is a value type consumed by both the SwiftUI view and AppDelegate.
 struct TokenSnapshot {
     var remainingPct: Double
     var usedTokens: Int

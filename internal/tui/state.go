@@ -1,7 +1,10 @@
+// Visual constants shared across TUI components: Claude state machine,
+// colour palette, and reusable lipgloss styles.
 package tui
 
 import "github.com/charmbracelet/lipgloss"
 
+// ClaudeState is the high-level state of the Claude subprocess.
 type ClaudeState int
 
 const (

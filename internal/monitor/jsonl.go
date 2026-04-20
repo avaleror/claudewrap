@@ -1,3 +1,6 @@
+// Package monitor tails Claude Code JSONL session transcripts in real time
+// and surfaces token-usage metrics to the TUI. The Watcher uses fsnotify to
+// detect file writes and scans only new bytes on each event (offset-based).
 package monitor
 
 import (
@@ -56,7 +59,8 @@ type Breakdown struct {
 	Conversation     int `json:"conversation"`
 }
 
-// Watcher watches a JSONL file and emits new entries.
+// Watcher tails a JSONL file and calls OnEntry for each new line.
+// It replays all existing entries at construction time, then watches for writes.
 type Watcher struct {
 	path    string
 	watcher *fsnotify.Watcher

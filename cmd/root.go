@@ -1,3 +1,7 @@
+// Package cmd wires together all ClaudeWrap subsystems.
+// root.go launches the TUI or dispatches to hook handlers based on CLI flags.
+// Hook subcommands (--hook-session-start etc.) are hidden from help output and
+// are intended to be called only from Claude Code's hook configuration.
 package cmd
 
 import (

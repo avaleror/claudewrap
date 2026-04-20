@@ -70,8 +70,9 @@ func queryOllamaChat(prompt, model string) (string, error) {
 	return result.Choices[0].Message.Content, nil
 }
 
-// Chain runs the fallback chain: Grok → Gemini → local Ollama.
-// Returns (response, engine, tokens, error).
+// Chain queries providers in order (Grok → Gemini → local Ollama) and returns
+// the first successful response along with the engine name and token count.
+// Local Ollama is always available so Chain only returns an error if all three fail.
 func Chain(prompt string) (string, string, int, error) {
 	if result, tokens, err := QueryGrok(prompt); err == nil {
 		return result, "Grok fast", tokens, nil

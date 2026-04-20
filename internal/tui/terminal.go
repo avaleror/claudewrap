@@ -1,3 +1,5 @@
+// TermWidget wraps the bubbleterm PTY model and tracks idle state via lastByte.
+// SIGWINCH is handled by WatchSIGWINCH, which forwards resize events to BubbleTea.
 package tui
 
 import (

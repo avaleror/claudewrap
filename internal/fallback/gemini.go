@@ -11,6 +11,8 @@ import (
 
 const geminiModel = "gemini-2.5-flash"
 
+// QueryGemini sends prompt to Google's Gemini API via the OpenAI-compatible endpoint.
+// Requires GEMINI_API_KEY.
 func QueryGemini(prompt string) (string, int, error) {
 	key := os.Getenv("GEMINI_API_KEY")
 	if key == "" {

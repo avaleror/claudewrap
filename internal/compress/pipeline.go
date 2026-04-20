@@ -1,3 +1,6 @@
+// Package compress runs user prompts through a local Ollama model to reduce
+// their token footprint before they reach Claude. Short prompts, code blocks,
+// and prompts prefixed with "!!" bypass compression entirely.
 package compress
 
 import (

@@ -1,3 +1,6 @@
+// MenuBarView.swift — SwiftUI popover shown when the user clicks the menubar icon.
+// Displays token bar, reset estimate, peak-hour notice, compaction warnings, and
+// fallback AI cost. Driven by the shared TokenMonitor instance.
 import SwiftUI
 
 struct MenuBarView: View {
