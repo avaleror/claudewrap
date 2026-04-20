@@ -12,11 +12,12 @@ import (
 	ctx "github.com/avaleror/claudewrap/internal/context"
 )
 
-// SessionInfo is written by the SessionStart hook and read by the TUI.
+// SessionInfo is written by the SessionStart hook and updated by the TUI.
 type SessionInfo struct {
-	SessionID      string    `json:"session_id"`
-	TranscriptPath string    `json:"transcript_path"`
-	StartedAt      time.Time `json:"started_at"`
+	SessionID       string    `json:"session_id"`
+	TranscriptPath  string    `json:"transcript_path"`
+	StartedAt       time.Time `json:"started_at"`
+	CompactionCount int       `json:"compaction_count"`
 }
 
 func SessionInfoPath(sessionID string) string {

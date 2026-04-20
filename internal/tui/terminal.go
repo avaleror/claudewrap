@@ -70,12 +70,14 @@ func (t *TermWidget) Resize(w, h int) tea.Cmd {
 }
 
 func (t *TermWidget) Update(msg tea.Msg) (*TermWidget, tea.Cmd) {
+	prevView := t.model.View().Content
 	m, cmd := t.model.Update(msg)
-	t.model = m.(*bubbleterm.Model)
-	// Track output activity
-	switch msg.(type) {
-	case tea.WindowSizeMsg:
-		// handled via Resize
+	if bt, ok := m.(*bubbleterm.Model); ok {
+		t.model = bt
+	}
+	// Update idle clock whenever PTY output changes
+	if t.model.View().Content != prevView {
+		t.lastByte = time.Now()
 	}
 	return t, cmd
 }

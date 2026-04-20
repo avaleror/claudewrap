@@ -26,17 +26,18 @@ func configureClaudeHooks() error {
 	if err != nil {
 		return err
 	}
-	var cfg map[string]json.RawMessage
+	var cfg struct {
+		Hooks map[string]json.RawMessage `json:"hooks"`
+	}
 	if err := json.Unmarshal(data, &cfg); err == nil {
-		if _, ok := cfg["hooks"]; ok {
+		if _, ok := cfg.Hooks["SessionStart"]; ok {
 			return nil // already configured
 		}
 	}
 
 	jqExpr := `
-.hooks.UserPromptSubmit = [{"hooks": [{"type": "command", "command": "claudewrap --hook-session-start"}]}]
+.hooks.SessionStart = [{"hooks": [{"type": "command", "command": "claudewrap --hook-session-start"}]}]
 | .hooks.StopFailure = [{"matcher": "rate_limit", "hooks": [{"type": "command", "command": "claudewrap --hook-rate-limit"}]}]
-| .hooks.SessionStart = [{"hooks": [{"type": "command", "command": "claudewrap --hook-session-start"}]}]
 | .hooks.PreCompact = [{"hooks": [{"type": "command", "command": "claudewrap --hook-pre-compact"}]}]`
 
 	tmp := settings + ".tmp"

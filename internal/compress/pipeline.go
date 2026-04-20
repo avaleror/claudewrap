@@ -2,7 +2,6 @@ package compress
 
 import (
 	"strings"
-	"unicode"
 )
 
 type Result struct {
@@ -64,8 +63,8 @@ func hasConsecutiveCodeLines(s string, threshold int) bool {
 			}
 			continue
 		}
-		// Check consistent indentation (4+ spaces or tab)
-		if len(line) > 0 && (line[0] == '\t' || (len(line) >= 4 && line[0] == ' ' && unicode.IsSpace(rune(line[0])))) {
+		// Check consistent indentation (tab or 4+ leading spaces)
+		if len(line) > 0 && (line[0] == '\t' || (len(line) >= 4 && line[0] == ' ' && line[1] == ' ' && line[2] == ' ' && line[3] == ' ')) {
 			consecutive++
 			if consecutive >= threshold {
 				return true

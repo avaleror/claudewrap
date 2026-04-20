@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/spf13/cobra"
@@ -65,15 +66,16 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		return runPassthrough(args)
 	}
 
+	var replayQueue []string
 	if schedule.HasQueue() {
-		offerQueueReplay()
+		replayQueue = offerQueueReplay()
 	}
 
 	if err := configureClaudeHooks(); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not configure hooks: %v\n", err)
 	}
 
-	return runTUI(args)
+	return runTUI(args, replayQueue)
 }
 
 func isVimEnv() bool {
@@ -88,12 +90,16 @@ func runPassthrough(args []string) error {
 	return c.Run()
 }
 
-func runTUI(args []string) error {
+func runTUI(args []string, replayQueue []string) error {
 	termCtx := appctx.Detect()
 	gitBranch := tui.GitBranch()
 
+	// Use PID-based socket so hooks can find us via the inherited env var.
+	socketPath := daemon.SocketPath(fmt.Sprintf("pid-%d", os.Getpid()))
+	os.Setenv("CLAUDEWRAP_SOCKET", socketPath)
+
 	w, h := termSize()
-	app, err := tui.NewApp(termCtx, gitBranch, args, w, h)
+	app, err := tui.NewApp(termCtx, gitBranch, args, w, h, replayQueue)
 	if err != nil {
 		return fmt.Errorf("failed to start TUI: %w", err)
 	}
@@ -106,9 +112,6 @@ func runTUI(args []string) error {
 
 	p := tea.NewProgram(app)
 
-	// Daemon socket — sends messages into the BubbleTea program
-	sessionID := daemon.ReadCurrentSessionID()
-	socketPath := daemon.SocketPath(sessionID)
 	go listenDaemon(socketPath, p)
 
 	cancel := tui.WatchSIGWINCH(p, nil)
@@ -170,28 +173,56 @@ func handleConn(conn net.Conn, p *tea.Program, state *monitor.State) {
 	case daemon.MsgPreCompact:
 		p.Send(tui.PreCompactMsg{})
 		state.IncrCompaction()
+		// Persist compaction count so Swift menubar can read it
+		if info, err := monitor.ReadSessionInfo(msg.SessionID); err == nil {
+			info.CompactionCount = state.Snapshot().CompactionCount
+			monitor.WriteSessionInfo(*info)
+		}
 	}
 }
 
 func watchJSONL(info *monitor.SessionInfo, p *tea.Program, state *monitor.State) {
-	monitor.NewWatcher(info.TranscriptPath, func(e monitor.Entry) {
-		state.Update(e)
-		snap := state.Snapshot()
-		p.Send(tui.StateUpdateMsg{Snap: snap})
-	})
+	var (
+		w   *monitor.Watcher
+		err error
+	)
+	// The JSONL file may not exist yet when SessionStart fires — retry for up to 30s.
+	for i := 0; i < 30; i++ {
+		w, err = monitor.NewWatcher(info.TranscriptPath, func(e monitor.Entry) {
+			state.Update(e)
+			snap := state.Snapshot()
+			p.Send(tui.StateUpdateMsg{Snap: snap})
+		})
+		if err == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "claudewrap: JSONL watcher: %v\n", err)
+		return
+	}
+	_ = w // watcher's internal goroutine holds the reference; runs for process lifetime
 }
 
-func offerQueueReplay() {
+func offerQueueReplay() []string {
 	q, err := schedule.Load()
 	if err != nil || len(q) == 0 {
-		return
+		return nil
 	}
 	fmt.Fprintf(os.Stderr, "\n%d queued prompt(s) from last session. Replay? [y/N] ", len(q))
 	var resp string
 	fmt.Scanln(&resp)
 	if resp != "y" && resp != "Y" {
 		schedule.Clear()
+		return nil
 	}
+	schedule.Clear()
+	texts := make([]string, len(q))
+	for i, p := range q {
+		texts[i] = p.Prompt
+	}
+	return texts
 }
 
 func termSize() (int, int) {

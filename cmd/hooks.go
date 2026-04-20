@@ -33,8 +33,8 @@ func hookSessionStart(cmd *cobra.Command, args []string) {
 	monitor.WriteSessionInfo(info)
 	daemon.WriteCurrentSessionID(payload.SessionID)
 
-	// Notify running TUI
-	socketPath := daemon.SocketPath(payload.SessionID)
+	// Notify running TUI via inherited socket path
+	socketPath := hookSocketPath(payload.SessionID)
 	daemon.Send(socketPath, daemon.Message{
 		Type:      daemon.MsgSessionStart,
 		SessionID: payload.SessionID,
@@ -55,9 +55,9 @@ func hookRateLimit(cmd *cobra.Command, args []string) {
 		schedule.Append(payload.Prompt, false)
 	}
 
-	// Notify TUI
+	// Notify TUI via inherited socket path
 	sessionID := daemon.ReadCurrentSessionID()
-	socketPath := daemon.SocketPath(sessionID)
+	socketPath := hookSocketPath(sessionID)
 	daemon.Send(socketPath, daemon.Message{
 		Type:      daemon.MsgRateLimit,
 		SessionID: sessionID,
@@ -73,10 +73,19 @@ func hookRateLimit(cmd *cobra.Command, args []string) {
 // hookPreCompact handles the PreCompact hook.
 func hookPreCompact(cmd *cobra.Command, args []string) {
 	sessionID := daemon.ReadCurrentSessionID()
-	socketPath := daemon.SocketPath(sessionID)
+	socketPath := hookSocketPath(sessionID)
 	daemon.Send(socketPath, daemon.Message{
 		Type:      daemon.MsgPreCompact,
 		SessionID: sessionID,
 	}, 2*time.Second)
 	os.Exit(0)
+}
+
+// hookSocketPath returns the socket path for hook → TUI communication.
+// Prefers CLAUDEWRAP_SOCKET (inherited from TUI process) over session-based fallback.
+func hookSocketPath(sessionID string) string {
+	if s := os.Getenv("CLAUDEWRAP_SOCKET"); s != "" {
+		return s
+	}
+	return daemon.SocketPath(sessionID)
 }

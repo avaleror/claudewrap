@@ -35,7 +35,8 @@ type App struct {
 	termCtx       appctx.TerminalContext
 	gitBranch     string
 	lowTokenAlerted bool
-	compactArmed    bool // /compact ready to fire on next idle
+	compactArmed    bool     // /compact ready to fire on next idle
+	replayQueue     []string // prompts to inject on first StateWaiting
 }
 
 // StateUpdateMsg carries fresh token state from the JSONL monitor.
@@ -53,7 +54,7 @@ type CompactArmedMsg struct{}
 // TickMsg drives idle detection.
 type TickMsg struct{}
 
-func NewApp(termCtx appctx.TerminalContext, gitBranch string, claudeArgs []string, w, h int) (*App, error) {
+func NewApp(termCtx appctx.TerminalContext, gitBranch string, claudeArgs []string, w, h int, replayQueue []string) (*App, error) {
 	termH := h - statusHeight - inputHeight - previewHeight
 	termW := w - panelWidth - 1
 
@@ -63,14 +64,15 @@ func NewApp(termCtx appctx.TerminalContext, gitBranch string, claudeArgs []strin
 	}
 
 	return &App{
-		term:      term,
-		input:     NewInput(w),
-		state:     StateRunning,
-		width:     w,
-		height:    h,
-		termCtx:   termCtx,
-		gitBranch: gitBranch,
-		engine:    "passthrough",
+		term:        term,
+		input:       NewInput(w),
+		state:       StateRunning,
+		width:       w,
+		height:      h,
+		termCtx:     termCtx,
+		gitBranch:   gitBranch,
+		engine:      "passthrough",
+		replayQueue: replayQueue,
 	}, nil
 }
 
@@ -97,6 +99,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.term.IsIdle() {
 			if a.state == StateRunning {
 				a.state = StateWaiting
+				// Replay next queued prompt on first idle
+				if len(a.replayQueue) > 0 {
+					text := a.replayQueue[0]
+					a.replayQueue = a.replayQueue[1:]
+					cmds = append(cmds, compressAsync(text), tick())
+					return a, tea.Batch(cmds...)
+				}
 			}
 			// Fire /compact if armed and idle
 			if a.compactArmed && a.state == StateWaiting {
