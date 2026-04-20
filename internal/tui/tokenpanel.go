@@ -33,6 +33,15 @@ func renderTokenPanel(snap monitor.StateSnapshot, width int, showBreakdown bool)
 	b.WriteString(fmt.Sprintf("  Rem:   %s\n",
 		lipgloss.NewStyle().Foreground(barColor).Render(bar)))
 
+	if snap.LastUsage != nil {
+		cacheRead := snap.LastUsage.CacheReadInputTokens
+		cacheCreate := snap.LastUsage.CacheCreationInputTokens
+		if cacheRead > 0 || cacheCreate > 0 {
+			saved := lipgloss.NewStyle().Foreground(colorGood).Render(fmt.Sprintf("↓%s", formatTokens(cacheRead)))
+			b.WriteString(fmt.Sprintf("  Cache: %s read / %s new\n", saved, formatTokens(cacheCreate)))
+		}
+	}
+
 	resetLine := "  Reset: " + snap.ResetIn()
 	if snap.IsPeak {
 		resetLine += "  " + lipgloss.NewStyle().Foreground(colorWarn).Render("Peak active")

@@ -39,6 +39,9 @@ type App struct {
 	compactArmed    bool     // /compact ready to fire on next idle
 	replayQueue     []string // prompts to inject on first StateWaiting
 	fallbackLog     string   // accumulated Q&A shown when rate limited
+	compressing     bool      // Ollama call in flight
+	runningStart    time.Time // when Claude last started responding
+	ollamaOK        bool      // Ollama reachable at startup
 }
 
 // StateUpdateMsg carries fresh token state from the JSONL monitor.
@@ -56,7 +59,7 @@ type CompactArmedMsg struct{}
 // TickMsg drives idle detection.
 type TickMsg struct{}
 
-func NewApp(termCtx appctx.TerminalContext, gitBranch string, claudeArgs []string, w, h int, replayQueue []string) (*App, error) {
+func NewApp(termCtx appctx.TerminalContext, gitBranch string, claudeArgs []string, w, h int, replayQueue []string, ollamaOK bool) (*App, error) {
 	termH := h - statusHeight - inputHeight - previewHeight
 	termW := w - panelWidth - 1
 
@@ -75,6 +78,7 @@ func NewApp(termCtx appctx.TerminalContext, gitBranch string, claudeArgs []strin
 		gitBranch:   gitBranch,
 		engine:      "passthrough",
 		replayQueue: replayQueue,
+		ollamaOK:    ollamaOK,
 	}, nil
 }
 
@@ -97,11 +101,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, a.term.Resize(termW, termH))
 
 	case TickMsg:
-		// Idle detection
 		if a.term.IsIdle() {
 			if a.state == StateRunning {
 				a.state = StateWaiting
-				// Replay next queued prompt on first idle
+				// Notify when Claude finishes a real response (not just startup idle)
+				if time.Since(a.runningStart) > 2*time.Second {
+					notify.Send("ClaudeWrap", "Ready")
+				}
 				if len(a.replayQueue) > 0 {
 					text := a.replayQueue[0]
 					a.replayQueue = a.replayQueue[1:]
@@ -109,7 +115,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return a, tea.Batch(cmds...)
 				}
 			}
-			// Fire /compact if armed and idle
 			if a.compactArmed && a.state == StateWaiting {
 				a.compactArmed = false
 				a.state = StateCompacting
@@ -119,6 +124,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			if a.state == StateWaiting {
 				a.state = StateRunning
+				a.runningStart = time.Now()
 			}
 		}
 		cmds = append(cmds, tick())
@@ -168,18 +174,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.state == StateRateLimit {
 			a.fallbackLog += fmt.Sprintf("You: %s\n\n", text)
 			cmds = append(cmds, fallbackAsync(text))
+		} else if IsConfirmationInput(text) {
+			// y/n/digit — skip compression, send directly to PTY
+			cmds = append(cmds, a.term.SendText(text))
+			a.state = StateRunning
+			a.runningStart = time.Now()
 		} else {
+			a.compressing = true
 			cmds = append(cmds, compressAsync(text))
 		}
 
 	case compressResultMsg:
+		a.compressing = false
 		a.engine = msg.engine
 		if msg.skipped || msg.compressed == msg.original {
-			// No meaningful compression — send directly
 			cmds = append(cmds, a.term.SendText(msg.original))
 			a.state = StateRunning
+			a.runningStart = time.Now()
 		} else {
-			// Show 2s preview
 			var cmd tea.Cmd
 			a.preview, cmd = a.preview.Show(msg.original, msg.compressed, msg.engine)
 			cmds = append(cmds, cmd)
@@ -209,6 +221,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, tea.Quit
 		}
 
+		// Ctrl+K — manual /compact
+		if k.Code == 'k' && k.Mod == tea.ModCtrl && a.state == StateWaiting {
+			a.state = StateCompacting
+			cmds = append(cmds, a.term.SendText("/compact"))
+			notify.Send("ClaudeWrap", "Manual compact triggered")
+			break
+		}
+
 		// 'b' toggles breakdown view
 		if k.Text == "b" && (a.state == StateWaiting || a.state == StateRateLimit) && a.preview.State == PreviewHidden {
 			a.showBreakdown = !a.showBreakdown
@@ -223,11 +243,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		// Waiting or rate-limited: route keys to our input component
+		// Waiting or rate-limited: route keys to input (block during compression)
 		if a.state == StateWaiting || a.state == StateRateLimit {
-			var cmd tea.Cmd
-			a.input, cmd = a.input.Update(msg)
-			cmds = append(cmds, cmd)
+			if !a.compressing {
+				var cmd tea.Cmd
+				a.input, cmd = a.input.Update(msg)
+				cmds = append(cmds, cmd)
+			}
 			break
 		}
 
@@ -294,6 +316,8 @@ func (a *App) View() tea.View {
 	var inputLine string
 	if a.preview.State == PreviewVisible {
 		inputLine = a.preview.View(a.width)
+	} else if a.compressing {
+		inputLine = dimStyle.Render("  Compressing with Ollama...")
 	} else if a.state == StateWaiting || a.state == StateRateLimit {
 		inputLine = a.input.View()
 	} else {
@@ -337,6 +361,13 @@ func (a *App) renderStatusBar() string {
 	if a.state == StateRateLimit {
 		parts = append(parts, "  "+lipgloss.NewStyle().Foreground(colorDanger).Render("rate limited"))
 	}
+	if !a.ollamaOK {
+		parts = append(parts, "  "+lipgloss.NewStyle().Foreground(colorWarn).Render("ollama: off"))
+	}
+
+	// Hint line (rotates based on state)
+	hint := "  [b: breakdown] [Ctrl+K: compact] [!!: bypass compression] [↑↓: history]"
+	parts = append(parts, dimStyle.Render(hint))
 
 	return statusBarStyle.Render(strings.Join(parts, ""))
 }

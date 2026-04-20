@@ -1,13 +1,37 @@
 package compress
 
 import (
+	"context"
+	"net/http"
+	"os"
 	"strings"
+	"time"
 )
 
 type Result struct {
 	Text    string
 	Skipped bool   // true if bypass rules triggered
 	Engine  string // "ollama", "bypass", "passthrough"
+}
+
+// OllamaAvailable returns true if the Ollama server is reachable.
+func OllamaAvailable() bool {
+	host := os.Getenv("OLLAMA_HOST")
+	if host == "" {
+		host = defaultOllamaHost
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, host+"/api/tags", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode == http.StatusOK
 }
 
 // ShouldBypass returns true if the prompt should skip compression.

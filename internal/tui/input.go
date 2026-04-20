@@ -7,19 +7,22 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// InputModel is a simple multi-line input component for bubbletea v2.
-// It buffers keystrokes, handles basic editing, and emits SubmitMsg on Enter.
+// InputModel is a simple single-line input component for bubbletea v2.
+// Supports history (↑↓), basic editing, and emits SubmitMsg on Enter.
 type InputModel struct {
-	buffer []rune
-	cursor int
-	width  int
+	buffer     []rune
+	cursor     int
+	width      int
+	history    []string // newest first
+	historyIdx int      // -1 = live input; 0+ = navigating history
+	saved      string   // preserves live input while browsing history
 }
 
 type SubmitMsg struct{ Text string }
 type CancelMsg struct{}
 
 func NewInput(width int) InputModel {
-	return InputModel{width: width}
+	return InputModel{width: width, historyIdx: -1}
 }
 
 func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
@@ -29,14 +32,45 @@ func (m InputModel) Update(msg tea.Msg) (InputModel, tea.Cmd) {
 		switch k.Code {
 		case tea.KeyEnter:
 			text := string(m.buffer)
+			if text != "" {
+				m.history = append([]string{text}, m.history...)
+				if len(m.history) > 100 {
+					m.history = m.history[:100]
+				}
+			}
 			m.buffer = nil
 			m.cursor = 0
+			m.historyIdx = -1
+			m.saved = ""
 			return m, func() tea.Msg { return SubmitMsg{Text: text} }
 
 		case tea.KeyEsc:
 			m.buffer = nil
 			m.cursor = 0
+			m.historyIdx = -1
+			m.saved = ""
 			return m, func() tea.Msg { return CancelMsg{} }
+
+		case tea.KeyUp:
+			if len(m.history) > 0 && m.historyIdx < len(m.history)-1 {
+				if m.historyIdx == -1 {
+					m.saved = string(m.buffer)
+				}
+				m.historyIdx++
+				m.buffer = []rune(m.history[m.historyIdx])
+				m.cursor = len(m.buffer)
+			}
+
+		case tea.KeyDown:
+			if m.historyIdx > 0 {
+				m.historyIdx--
+				m.buffer = []rune(m.history[m.historyIdx])
+				m.cursor = len(m.buffer)
+			} else if m.historyIdx == 0 {
+				m.historyIdx = -1
+				m.buffer = []rune(m.saved)
+				m.cursor = len(m.buffer)
+			}
 
 		case tea.KeyBackspace:
 			if m.cursor > 0 {
@@ -103,11 +137,16 @@ func (m InputModel) IsEmpty() bool {
 	return len(m.buffer) == 0
 }
 
-// IsConfirmationInput returns true if the buffer looks like a y/n response.
-// Used to detect when we should pass through directly to PTY.
+// IsConfirmationInput returns true if input looks like a tool approval response.
+// These bypass compression and go straight to the PTY.
 func IsConfirmationInput(s string) bool {
 	s = strings.TrimSpace(strings.ToLower(s))
-	return s == "y" || s == "n" || s == "yes" || s == "no"
+	switch s {
+	case "y", "n", "yes", "no":
+		return true
+	}
+	// Single digit — tool/option selection (1, 2, 3...)
+	return len(s) == 1 && s[0] >= '0' && s[0] <= '9'
 }
 
 func deleteWordBackward(m InputModel) InputModel {

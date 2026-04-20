@@ -105,8 +105,10 @@ func runTUI(args []string, replayQueue []string) error {
 	socketPath := daemon.SocketPath(fmt.Sprintf("pid-%d", os.Getpid()))
 	os.Setenv("CLAUDEWRAP_SOCKET", socketPath)
 
+	ollamaOK := compress.OllamaAvailable()
+
 	w, h := termSize()
-	app, err := tui.NewApp(termCtx, gitBranch, args, w, h, replayQueue)
+	app, err := tui.NewApp(termCtx, gitBranch, args, w, h, replayQueue, ollamaOK)
 	if err != nil {
 		return fmt.Errorf("failed to start TUI: %w", err)
 	}

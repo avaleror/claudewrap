@@ -78,14 +78,18 @@ func (p PreviewModel) View(width int) string {
 		secs = 0
 	}
 
+	ratio := 0
+	if len(p.Original) > 0 {
+		ratio = 100 - (len([]rune(p.Compressed))*100)/len([]rune(p.Original))
+	}
 	preview := p.Compressed
-	maxLen := width - 20
+	maxLen := width - 25
 	if len(preview) > maxLen && maxLen > 3 {
 		preview = preview[:maxLen] + "..."
 	}
 
-	line1 := fmt.Sprintf("  Compressed: %s", preview)
-	line2 := fmt.Sprintf("  Sending in %.1fs...  [Esc to send original]  [%s]", secs, p.Engine)
+	line1 := fmt.Sprintf("  Compressed -%d%%: %s", ratio, preview)
+	line2 := fmt.Sprintf("  Sending in %.1fs...  [Esc: send original]  [%s]", secs, p.Engine)
 
 	style := lipgloss.NewStyle().
 		Background(lipgloss.Color("237")).
