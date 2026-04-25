@@ -69,7 +69,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	if isVimEnv() {
+	if isNeovimEnv() {
 		return runPassthrough(args)
 	}
 
@@ -89,8 +89,9 @@ func runRoot(cmd *cobra.Command, args []string) error {
 	return runTUI(args, replayQueue)
 }
 
-func isVimEnv() bool {
-	return os.Getenv("VIM") != "" || os.Getenv("NVIM_LISTEN_ADDRESS") != ""
+func isNeovimEnv() bool {
+	// $NVIM is set by Neovim >= 0.5 (socket path); $NVIM_LISTEN_ADDRESS is the legacy form
+	return os.Getenv("NVIM") != "" || os.Getenv("NVIM_LISTEN_ADDRESS") != ""
 }
 
 func runPassthrough(args []string) error {

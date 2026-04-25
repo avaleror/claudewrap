@@ -272,14 +272,26 @@ cmux picks these up as sidebar notifications automatically. In Ghostty they appe
 
 ---
 
-## Vim / Neovim
+## Neovim
 
-When `$VIM` or `$NVIM_LISTEN_ADDRESS` is set, ClaudeWrap runs in passthrough mode (no TUI, transparent stdio). Use with vim-floaterm:
+When `$NVIM` or `$NVIM_LISTEN_ADDRESS` is set, ClaudeWrap runs in passthrough mode (transparent stdio, no TUI). Use with [toggleterm.nvim](https://github.com/akinsho/toggleterm.nvim):
 
-```vim
-" contrib/vim-floaterm.vim
-noremap <silent> <leader>cc :FloatermNew --title=ClaudeWrap claudewrap<CR>
+```lua
+-- contrib/neovim.lua
+local Terminal = require("toggleterm.terminal").Terminal
+
+local claudewrap = Terminal:new({
+  cmd = "claudewrap",
+  direction = "float",
+  float_opts = { border = "curved", width = math.floor(vim.o.columns * 0.9), height = math.floor(vim.o.lines * 0.9) },
+  on_open = function() vim.cmd("startinsert!") end,
+})
+
+vim.keymap.set("n", "<leader>cc", function() claudewrap:toggle() end,
+  { desc = "Toggle ClaudeWrap", noremap = true, silent = true })
 ```
+
+Copy the full config from `contrib/neovim.lua`. vim-floaterm also works — see the comment at the bottom of that file.
 
 ---
 
