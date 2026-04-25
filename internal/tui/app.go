@@ -42,7 +42,8 @@ type App struct {
 	compactArmed    bool     // /compact ready to fire on next idle
 	replayQueue     []string // prompts to inject on first StateWaiting
 	fallbackLog     string   // accumulated Q&A shown when rate limited
-	compressing     bool      // Ollama call in flight
+	compressing     bool      // Ollama compression call in flight
+	filtering       bool      // Ollama paste filter call in flight
 	runningStart    time.Time // when Claude last started responding
 	ollamaOK        bool      // Ollama reachable at startup
 }
@@ -187,6 +188,35 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmds = append(cmds, compressAsync(text))
 		}
 
+	case tea.PasteMsg:
+		if a.state != StateWaiting || a.filtering || a.compressing {
+			break
+		}
+		content := strings.TrimSpace(msg.Content)
+		if content == "" {
+			break
+		}
+		existing := strings.TrimSpace(a.input.Value())
+		a.input = NewInput(a.width)
+		if existing != "" {
+			content = existing + "\n" + content
+		}
+		a.filtering = true
+		cmds = append(cmds, pasteFilterAsync(content))
+
+	case pasteFilterResultMsg:
+		a.filtering = false
+		a.engine = msg.engine
+		if msg.skipped || msg.filtered == msg.original {
+			cmds = append(cmds, a.term.SendText(msg.original))
+			a.state = StateRunning
+			a.runningStart = time.Now()
+		} else {
+			var cmd tea.Cmd
+			a.preview, cmd = a.preview.Show(msg.original, msg.filtered, msg.engine, "filter")
+			cmds = append(cmds, cmd)
+		}
+
 	case compressResultMsg:
 		a.compressing = false
 		a.engine = msg.engine
@@ -196,7 +226,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.runningStart = time.Now()
 		} else {
 			var cmd tea.Cmd
-			a.preview, cmd = a.preview.Show(msg.original, msg.compressed, msg.engine)
+			a.preview, cmd = a.preview.Show(msg.original, msg.compressed, msg.engine, "compress")
 			cmds = append(cmds, cmd)
 		}
 
@@ -246,9 +276,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break
 		}
 
-		// Waiting or rate-limited: route keys to input (block during compression)
+		// Waiting or rate-limited: route keys to input (block during compression/filtering)
 		if a.state == StateWaiting || a.state == StateRateLimit {
-			if !a.compressing {
+			if !a.compressing && !a.filtering {
 				var cmd tea.Cmd
 				a.input, cmd = a.input.Update(msg)
 				cmds = append(cmds, cmd)
@@ -319,6 +349,8 @@ func (a *App) View() tea.View {
 	var inputLine string
 	if a.preview.State == PreviewVisible {
 		inputLine = a.preview.View(a.width)
+	} else if a.filtering {
+		inputLine = dimStyle.Render("  Filtering paste with Ollama...")
 	} else if a.compressing {
 		inputLine = dimStyle.Render("  Compressing with Ollama...")
 	} else if a.state == StateWaiting || a.state == StateRateLimit {
@@ -369,7 +401,7 @@ func (a *App) renderStatusBar() string {
 	}
 
 	// Hint line (rotates based on state)
-	hint := "  [b: breakdown] [Ctrl+K: compact] [!!: bypass compression] [↑↓: history]"
+	hint := "  [b: breakdown] [Ctrl+K: compact] [!!: bypass] [↑↓: history]"
 	parts = append(parts, dimStyle.Render(hint))
 
 	return statusBarStyle.Render(strings.Join(parts, ""))
@@ -391,6 +423,32 @@ func tick() tea.Cmd {
 	return tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg {
 		return TickMsg{}
 	})
+}
+
+// pasteFilterResultMsg carries the result of async paste filtering.
+type pasteFilterResultMsg struct {
+	original string
+	filtered string
+	engine   string
+	skipped  bool
+}
+
+var runPasteFilter = func(text string) tea.Msg {
+	return pasteFilterResultMsg{original: text, filtered: text, engine: "passthrough", skipped: true}
+}
+
+// SetPasteFilterFunc wires in the real paste filter from cmd.
+func SetPasteFilterFunc(fn func(string) tea.Msg) {
+	runPasteFilter = fn
+}
+
+// PasteFilterResult builds a pasteFilterResultMsg for use from cmd package.
+func PasteFilterResult(original, filtered, engine string, skipped bool) tea.Msg {
+	return pasteFilterResultMsg{original: original, filtered: filtered, engine: engine, skipped: skipped}
+}
+
+func pasteFilterAsync(text string) tea.Cmd {
+	return func() tea.Msg { return runPasteFilter(text) }
 }
 
 // compressResultMsg carries the result of async compression.

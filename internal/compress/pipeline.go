@@ -52,6 +52,23 @@ func ShouldBypass(prompt string) bool {
 	return false
 }
 
+// FilterPaste runs pasted content through the Ollama paste filter.
+// Short content and !! prefix bypass filtering.
+func FilterPaste(content string) Result {
+	content = strings.TrimSpace(content)
+	if strings.HasPrefix(content, "!!") {
+		return Result{Text: strings.TrimSpace(content[2:]), Skipped: true, Engine: "bypass"}
+	}
+	if len([]rune(content)) < 80 {
+		return Result{Text: content, Skipped: true, Engine: "bypass"}
+	}
+	filtered, err := ollamaFilterPaste(content)
+	if err != nil {
+		return Result{Text: content, Skipped: true, Engine: "passthrough"}
+	}
+	return Result{Text: filtered, Engine: "filter"}
+}
+
 // Compress runs the prompt through Ollama compression.
 // Returns the original prompt unchanged if Ollama is unavailable.
 func Compress(prompt string) Result {

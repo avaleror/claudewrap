@@ -25,6 +25,7 @@ type PreviewModel struct {
 	Original   string
 	Compressed string
 	Engine     string
+	Mode       string // "compress" or "filter"
 	Deadline   time.Time
 	Cancelled  bool
 }
@@ -37,11 +38,12 @@ func (p PreviewModel) Init() tea.Cmd {
 	return nil
 }
 
-func (p PreviewModel) Show(original, compressed, engine string) (PreviewModel, tea.Cmd) {
+func (p PreviewModel) Show(original, compressed, engine, mode string) (PreviewModel, tea.Cmd) {
 	p.State = PreviewVisible
 	p.Original = original
 	p.Compressed = compressed
 	p.Engine = engine
+	p.Mode = mode
 	p.Deadline = time.Now().Add(previewDuration)
 	p.Cancelled = false
 	return p, tickPreview()
@@ -80,21 +82,28 @@ func (p PreviewModel) View(width int) string {
 		secs = 0
 	}
 
+	label := "Compressed"
+	bg := lipgloss.Color("237")
+	if p.Mode == "filter" {
+		label = "Paste filtered"
+		bg = lipgloss.Color("23") // dark teal
+	}
+
 	ratio := 0
 	if len(p.Original) > 0 {
 		ratio = 100 - (len([]rune(p.Compressed))*100)/len([]rune(p.Original))
 	}
 	preview := p.Compressed
-	maxLen := width - 25
+	maxLen := width - 30
 	if len(preview) > maxLen && maxLen > 3 {
 		preview = preview[:maxLen] + "..."
 	}
 
-	line1 := fmt.Sprintf("  Compressed -%d%%: %s", ratio, preview)
+	line1 := fmt.Sprintf("  %s -%d%%: %s", label, ratio, preview)
 	line2 := fmt.Sprintf("  Sending in %.1fs...  [Esc: send original]  [%s]", secs, p.Engine)
 
 	style := lipgloss.NewStyle().
-		Background(lipgloss.Color("237")).
+		Background(bg).
 		Foreground(lipgloss.Color("252"))
 
 	return style.Render(padRight(line1, width)) + "\n" +

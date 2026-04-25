@@ -122,6 +122,11 @@ func runTUI(args []string, replayQueue []string) error {
 		return tui.CompressResult(text, r.Text, r.Engine, r.Skipped)
 	})
 
+	tui.SetPasteFilterFunc(func(text string) tea.Msg {
+		r := compress.FilterPaste(text)
+		return tui.PasteFilterResult(text, r.Text, r.Engine, r.Skipped)
+	})
+
 	tui.SetFallbackFunc(func(text string) tea.Msg {
 		result, engine, tokens, err := fallback.Chain(text)
 		return tui.FallbackResult(result, engine, tokens, err)
