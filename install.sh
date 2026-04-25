@@ -17,6 +17,9 @@ step "Checking Go and jq..."
 brew list go >/dev/null 2>&1 || brew install go
 brew list jq >/dev/null 2>&1 || brew install jq
 
+step "Checking Neovim..."
+brew list neovim >/dev/null 2>&1 || brew install neovim
+
 step "Checking alerter (optional — enables actionable notifications)..."
 brew list alerter >/dev/null 2>&1 || brew install alerter || warn "alerter not installed — basic notifications will be used"
 
