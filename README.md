@@ -1,6 +1,6 @@
 # ClaudeWrap
 
-A macOS TUI wrapper for [Claude Code](https://claude.ai/code) that adds prompt compression, live token monitoring, auto-compaction, and an AI fallback chain — without changing how you use Claude.
+A macOS TUI wrapper for [Claude Code](https://claude.ai/code) that adds prompt compression, paste filtering, live token monitoring, auto-compaction, and an AI fallback chain — without changing how you use Claude.
 
 Run `claudewrap` instead of `claude`. Everything else works the same.
 
@@ -11,10 +11,12 @@ Run `claudewrap` instead of `claude`. Everything else works the same.
 | Feature | How |
 |---|---|
 | **Prompt compression** | Rewrites prompts 40–60% shorter via local Ollama before they reach Claude |
+| **Paste filter** | Detects pasted content (logs, code, docs, JSON) and extracts only what Claude needs to act on |
 | **Live token panel** | Right sidebar shows usage %, reset countdown, cache hits, and per-category breakdown |
-| **Auto-compact** | Injects `/compact` at 60% context usage — never mid-response |
-| **AI fallback chain** | When rate-limited, routes prompts to Grok → Gemini → local Ollama automatically |
+| **Auto-compact** | Injects `/compact` at 30% context usage — never mid-response |
+| **AI fallback chain** | When rate-limited, routes prompts to Grok → Gemini → local Ollama with exponential backoff |
 | **Session queue** | Saves prompts on rate limit; replays them after reset |
+| **Operation log** | Every compress, filter, and fallback call is logged to `~/.claudewrap/logs/` as JSONL |
 | **Native notifications** | OSC 9 (cmux/Ghostty), alerter (actionable), or osascript |
 | **Menubar app** | Persistent token % in the macOS menubar, aggregates all active sessions |
 
@@ -24,8 +26,9 @@ Run `claudewrap` instead of `claude`. Everything else works the same.
 
 - macOS 14+
 - Go 1.26+
-- Swift 6+ (Xcode or Swift toolchain)
-- [Ollama](https://ollama.com) (for compression — optional but recommended)
+- Swift 6+ (Xcode or Swift toolchain, for the menubar app)
+- [Ollama](https://ollama.com) (for compression and paste filter — optional but recommended)
+- Neovim (installed automatically via Homebrew if missing)
 - `jq` (for hook auto-install)
 - `alerter` (optional — enables actionable notification buttons)
 
@@ -38,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/avaleror/claudewrap/main/install.sh
 ```
 
 The install script:
-1. Installs Go, jq, alerter, Ollama via Homebrew
+1. Installs Go, jq, Neovim, alerter, and Ollama via Homebrew
 2. Pulls `qwen2.5-coder:3b` and creates the `claudewrap-compressor` model
 3. Registers Ollama and the menubar app as launchd services
 4. Builds and places `claudewrap` + `claudewrap-menubar` in `/usr/local/bin`
@@ -121,8 +124,8 @@ Any flag not recognized by claudewrap is forwarded to `claude` directly.
 | Key | Action |
 |---|---|
 | `Enter` | Submit prompt (runs through compression) |
-| `!!` prefix | Bypass compression — send prompt as-is |
-| `Esc` | During preview: send original instead of compressed |
+| `!!` prefix | Bypass compression and paste filter — send as-is |
+| `Esc` | During preview: send original instead of compressed/filtered |
 | `↑` / `↓` | Navigate prompt history (last 100 entries) |
 | `b` | Toggle per-category token breakdown in panel |
 | `Ctrl+K` | Manual `/compact` (only when idle) |
@@ -144,14 +147,14 @@ ClaudeWrap intercepts every prompt at Enter and rewrites it with a local Ollama 
 
 ### Preview window
 
-After compression, a 2-second preview appears:
+After compression or paste filtering, a 2-second preview appears:
 
 ```
   Compressed -52%: refactor auth middleware to use session tokens per compliance req...
   Sending in 1.8s...  [Esc: send original]  [ollama]
 ```
 
-Press `Esc` within 2 seconds to send the original prompt instead.
+Paste filter previews use a teal background to distinguish them from compression. Press `Esc` within 2 seconds to send the original instead.
 
 ### Ollama model
 
@@ -166,6 +169,31 @@ PARAMETER temperature 0.1
 ```
 
 If Ollama is not running, compression falls back to passthrough silently.
+
+---
+
+## Paste filter
+
+When you paste content into the input box, ClaudeWrap detects it via bracketed paste mode and routes it through a dedicated filter (Ollama `qwen2.5:3b`) before sending to Claude. The filter extracts only what Claude needs to act on, removing noise based on content type:
+
+| Content | What gets kept | What gets removed |
+|---|---|---|
+| Error / log | Error message, stack trace, key context | Timestamps, repeated lines, verbose debug output |
+| Code | Full content if < 200 lines; key functions + summary comments if longer | Large filler blocks |
+| Docs / text | Requirements, constraints, key facts | Redundant examples, filler |
+| JSON / YAML | Structure + 3 example records | Remaining repeated records (noted with count) |
+
+If you paste something already concise (< 80 characters), it bypasses the filter. Prefix with `!!` to skip entirely. Any text already typed in the input box is prepended to the paste before filtering.
+
+### Secret scrubbing
+
+Before any text reaches local Ollama (for either compression or paste filtering), ClaudeWrap scans for and redacts:
+- Assignment patterns: `API_KEY=...`, `TOKEN=...`, `SECRET=...`
+- Bearer / Authorization header values
+- Known key prefixes: `sk-ant-`, `sk-`, `xai-`, `AIza`
+- AWS access key patterns (`AKIA...`, `ASIA...`)
+
+Redaction is noted in the operation log and in the `Redacted` field of the result.
 
 ---
 
@@ -211,7 +239,9 @@ ClaudeWrap estimates session reset as `first_entry_time + 5h`. During **peak hou
 
 ## Auto-compact
 
-When `context_window.used_percentage >= 60%`, ClaudeWrap waits for Claude to become idle (no PTY output for 500ms), then injects `/compact`.
+When `context_window.used_percentage >= 30%`, ClaudeWrap waits for Claude to become idle (no PTY output for 500ms), then injects `/compact`.
+
+Research shows model quality starts degrading at 20–40% context fill, so compacting at 30% keeps quality high throughout the session.
 
 Rules:
 - Never fires mid-response
@@ -223,15 +253,31 @@ Rules:
 
 ## AI fallback chain
 
-When the Claude session hits a rate limit, ClaudeWrap switches to a fallback mode. Your input box stays active; prompts are routed to:
+When the Claude session hits a rate limit, ClaudeWrap switches to fallback mode. Your input box stays active; prompts are routed through:
 
 ```
 Grok (grok-4-1-fast)  →  Gemini (gemini-2.5-flash)  →  local Ollama
 ```
 
-The terminal pane shows the Q&A log from fallback providers. The status bar shows `⚠ rate limited` in red. Daily token count and cost are tracked separately in the panel.
+Each cloud provider gets 3 attempts with exponential backoff (1 s, 2 s, 4 s) before falling through to the next. The terminal pane shows the Q&A log from fallback providers. The status bar shows `⚠ rate limited` in red. Daily token count and cost are tracked separately in the panel.
 
 On the next `claudewrap` start, if a queue file exists you will be asked whether to replay the queued prompts.
+
+---
+
+## Operation log
+
+Every compression, paste filter, and fallback operation is logged to `~/.claudewrap/logs/claudewrap-YYYY-MM-DD.jsonl`. One file per day.
+
+Example entry:
+
+```json
+{"timestamp":"2026-04-30T18:45:12Z","operation":"compress","engine":"ollama","tokens_in":312,"tokens_out":141,"ratio":0.55,"duration_ms":820,"success":true}
+{"timestamp":"2026-04-30T18:46:03Z","operation":"filter","engine":"filter","tokens_in":2104,"tokens_out":390,"ratio":0.81,"duration_ms":1340,"success":true,"redacted":true}
+{"timestamp":"2026-04-30T19:01:22Z","operation":"fallback","engine":"Grok fast","tokens_out":540,"success":true}
+```
+
+Fields: `timestamp`, `operation`, `engine`, `tokens_in`, `tokens_out`, `ratio`, `duration_ms`, `success`, `skipped`, `cache_hit`, `redacted`, `error`.
 
 ---
 
@@ -317,6 +363,9 @@ Copy the full config from `contrib/neovim.lua`. vim-floaterm also works — see 
   sessions/<id>.json         # session info written by SessionStart hook
   queue.json                 # pending prompts saved on rate limit
   context_<ts>.json          # token snapshot at time of rate limit
+  compress-cache.json        # dedup cache: SHA-256 → compressed result
+  logs/
+    claudewrap-YYYY-MM-DD.jsonl  # structured operation log (one file per day)
 
 ~/.claude/
   settings.json              # Claude Code config — hooks auto-merged here
@@ -343,12 +392,13 @@ See [docs/architecture.md](docs/architecture.md) for detailed diagrams.
 │  ┌────▼──────┐    ┌─────────▼──────┐          Unix socket           │
 │  │  Ollama   │    │  JSONL Watcher │         (CLAUDEWRAP_SOCKET)     │
 │  │ compress  │    │  (fsnotify)    │                   │            │
-│  └────┬──────┘    └────────┬───────┘          ┌────────▼────────┐  │
-│       │                    │                   │  listenDaemon   │  │
-│  ┌────▼────────────────────▼───────────────────▼──────────────┐  │
-│  │                     BubbleTea App                           │  │
-│  │  TermWidget │ InputModel │ PreviewModel │ Token Panel        │  │
-│  └────────────────────────────────────────────────────────────┘  │
+│  │  + filter │    └────────┬───────┘          ┌────────▼────────┐  │
+│  └────┬──────┘             │                   │  listenDaemon   │  │
+│       │                    │                   └────────┬────────┘  │
+│  ┌────▼────────────────────▼───────────────────▼──────────────────┐  │
+│  │                     BubbleTea App                               │  │
+│  │  TermWidget │ InputModel │ PreviewModel │ Token Panel            │  │
+│  └────────────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────┐
@@ -366,8 +416,9 @@ See [docs/architecture.md](docs/architecture.md) for detailed diagrams.
 ```
 claudewrap/
 ├── main.go
+├── CHANGELOG.md
 ├── cmd/
-│   ├── root.go          # CLI entry point, TUI launch, queue replay
+│   ├── root.go          # CLI entry point, TUI launch, queue replay, logger init
 │   ├── hooks.go         # SessionStart / RateLimit / PreCompact handlers
 │   └── setup.go         # hook auto-install into ~/.claude/settings.json
 ├── internal/
@@ -375,16 +426,20 @@ claudewrap/
 │   │   ├── app.go       # root BubbleTea model
 │   │   ├── terminal.go  # PTY widget (bubbleterm) + SIGWINCH handler
 │   │   ├── input.go     # single-line input with history
-│   │   ├── preview.go   # 2s compression preview overlay
+│   │   ├── preview.go   # 2s compression/filter preview overlay
 │   │   ├── tokenpanel.go # right-side token panel renderer
 │   │   └── state.go     # ClaudeState enum, colors, lipgloss styles
 │   ├── compress/
-│   │   ├── pipeline.go  # bypass rules + OllamaAvailable check
-│   │   └── ollama.go    # HTTP client for /v1/chat/completions
+│   │   ├── pipeline.go  # bypass rules, cache, secret scrubbing, logging
+│   │   ├── ollama.go    # HTTP client for /v1/chat/completions (compress + filter)
+│   │   ├── cache.go     # SHA-256 dedup cache, persisted to disk
+│   │   └── scrubber.go  # regex-based secret redaction before Ollama calls
 │   ├── fallback/
 │   │   ├── grok.go      # xAI Grok via openai-go SDK
 │   │   ├── gemini.go    # Google Gemini via OpenAI-compat endpoint
-│   │   └── ollama.go    # local Ollama fallback + Chain() orchestrator
+│   │   └── ollama.go    # local Ollama fallback + Chain() with exponential backoff
+│   ├── logger/
+│   │   └── logger.go    # JSONL operation log to ~/.claudewrap/logs/
 │   ├── monitor/
 │   │   ├── jsonl.go     # fsnotify JSONL watcher, offset-based reads
 │   │   └── session.go   # State, StateSnapshot, reset estimate, ProgressBar
@@ -398,6 +453,8 @@ claudewrap/
 │   │   └── socket.go    # Unix socket helpers, PID-based path scheme
 │   └── context/
 │       └── terminal.go  # terminal detection, IsPeakHour
+├── contrib/
+│   └── neovim.lua       # toggleterm.nvim integration (<leader>cc)
 └── menubar/
     ├── Package.swift
     └── Sources/ClaudeWrapMenuBar/
