@@ -70,16 +70,47 @@ func queryOllamaChat(prompt, model string) (string, error) {
 	return result.Choices[0].Message.Content, nil
 }
 
-// Chain queries providers in order (Grok → Gemini → local Ollama) and returns
-// the first successful response along with the engine name and token count.
-// Local Ollama is always available so Chain only returns an error if all three fail.
+// withBackoff retries fn up to maxAttempts times with exponential backoff.
+// Delays: 1s, 2s, 4s (capped at maxAttempts-1 retries after the first try).
+func withBackoff(maxAttempts int, fn func() error) error {
+	var err error
+	for i := 0; i < maxAttempts; i++ {
+		if err = fn(); err == nil {
+			return nil
+		}
+		if i < maxAttempts-1 {
+			time.Sleep(time.Duration(1<<uint(i)) * time.Second)
+		}
+	}
+	return err
+}
+
+// Chain queries providers in order (Grok → Gemini → local Ollama) with
+// exponential backoff on transient failures. Returns the first successful
+// response along with the engine name and token count.
 func Chain(prompt string) (string, string, int, error) {
-	if result, tokens, err := QueryGrok(prompt); err == nil {
+	var (
+		result string
+		tokens int
+		err    error
+	)
+
+	err = withBackoff(3, func() error {
+		result, tokens, err = QueryGrok(prompt)
+		return err
+	})
+	if err == nil {
 		return result, "Grok fast", tokens, nil
 	}
-	if result, tokens, err := QueryGemini(prompt); err == nil {
+
+	err = withBackoff(3, func() error {
+		result, tokens, err = QueryGemini(prompt)
+		return err
+	})
+	if err == nil {
 		return result, "Gemini Flash", tokens, nil
 	}
-	result, err := QueryOllamaFallback(prompt)
+
+	result, err = QueryOllamaFallback(prompt)
 	return result, "Ollama local", 0, err
 }

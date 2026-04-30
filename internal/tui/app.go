@@ -156,7 +156,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.panel = snap
 		a.engine = "ollama"
 		// Arm /compact if context usage >= 60%
-		if snap.ContextUsedPct >= 60 && !a.compactArmed && a.state != StateCompacting {
+		if snap.ContextUsedPct >= 30 && !a.compactArmed && a.state != StateCompacting {
 			a.compactArmed = true
 			cmds = append(cmds, func() tea.Msg { return CompactArmedMsg{} })
 		}

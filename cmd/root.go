@@ -19,6 +19,7 @@ import (
 	appctx "github.com/avaleror/claudewrap/internal/context"
 	"github.com/avaleror/claudewrap/internal/daemon"
 	"github.com/avaleror/claudewrap/internal/fallback"
+	"github.com/avaleror/claudewrap/internal/logger"
 	"github.com/avaleror/claudewrap/internal/monitor"
 	"github.com/avaleror/claudewrap/internal/schedule"
 	"github.com/avaleror/claudewrap/internal/tui"
@@ -103,6 +104,11 @@ func runPassthrough(args []string) error {
 }
 
 func runTUI(args []string, replayQueue []string) error {
+	if err := logger.Init(); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not open log file: %v\n", err)
+	}
+	defer logger.Close()
+
 	termCtx := appctx.Detect()
 	gitBranch := tui.GitBranch()
 
@@ -130,6 +136,11 @@ func runTUI(args []string, replayQueue []string) error {
 
 	tui.SetFallbackFunc(func(text string) tea.Msg {
 		result, engine, tokens, err := fallback.Chain(text)
+		entry := logger.Entry{Operation: "fallback", Engine: engine, TokensOut: tokens, Success: err == nil}
+		if err != nil {
+			entry.Error = err.Error()
+		}
+		logger.Log(entry)
 		return tui.FallbackResult(result, engine, tokens, err)
 	})
 
